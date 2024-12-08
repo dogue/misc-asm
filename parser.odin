@@ -170,12 +170,12 @@ parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operand
     return true
 }
 
-parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode, ok: bool) {
+parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode) {
     #partial switch peek(parser).type {
     case .Hash:
         mode = .Immediate
         consume(parser) // discard #
-        expect_set(parser, {.Number, .HexNumber}) or_return
+        expect_set(parser, {.Number, .HexNumber})
 
         value_token := consume(parser)
         append(tokens, value_token)
@@ -185,7 +185,6 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
             raw_value, conversion_ok := strconv.parse_int(value_token.text, 10)
             if !conversion_ok {
                 error(parser, value_token, .StrConvFailed)
-                return
             }
             value = ByteLiteral(raw_value)
         }
@@ -194,13 +193,12 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
             raw_value, conversion_ok := strconv.parse_int(value_token.text, 16)
             if !conversion_ok {
                 error(parser, value_token, .StrConvFailed)
-                return
             }
             value = ByteLiteral(raw_value)
         }
 
         append(operands, value)
-        return .Immediate, true
+        mode = .Immediate
 
     case .HexNumber:
         address_token := consume(parser)
@@ -209,7 +207,6 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
         raw_value, conversion_ok := strconv.parse_int(address_token.text, 16)
         if !conversion_ok {
             error(parser, address_token, .StrConvFailed)
-            return
         }
 
         address := AddrLiteral(raw_value)
@@ -224,20 +221,18 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
         // indexed modes
         if match(parser, .Comma) {
             consume(parser) // discard comma
-            parse_register_operand(parser, tokens, operands) or_return
+            parse_register_operand(parser, tokens, operands)
 
             if mode == .ZeroPage {
                 mode = .IndexedZeroPage
             } else {
                 mode = .IndexedAbsolute
             }
-       }
-
-       return mode, true
+        }
 
     case .Register:
-        parse_register_operand(parser, tokens, operands) or_return
-        return .Register, true
+        parse_register_operand(parser, tokens, operands)
+        mode = .Register
 
     case:
         error(parser, peek(parser))
@@ -246,8 +241,8 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
     return
 }
 
-parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction, ok: bool) {
-    expect(parser, .Instruction) or_return
+parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction) {
+    expect(parser, .Instruction)
     context.allocator = vmem.arena_allocator(&parser.arena)
     tokens := make([dynamic]Token)
     operands := make([dynamic]Operand)
@@ -257,67 +252,72 @@ parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction, ok: boo
 
     raw_inst := strings.to_upper(instruction_token.text)
     switch raw_inst {
-    case "LDA": instruction = parse_lda(parser, &tokens, &operands) or_return
-    case "LDR": instruction = parse_ldr(parser, &tokens, &operands) or_return
-    case "CLR": instruction = parse_clr(parser, &tokens, &operands) or_return
-    case "SWP": instruction = parse_swp(parser, &tokens, &operands) or_return
+    case "LDR":
+        instruction = parse_ldr(parser, &tokens, &operands)
+
+    case "CLR":
+        instruction = parse_clr(parser, &tokens, &operands)
+
+    case "SWP":
+        instruction = parse_swp(parser, &tokens, &operands)
+
+    case:
+        instruction.addr_mode = parse_value_operand(parser, &tokens, &operands)
+
     }
 
     instruction.tokens = tokens[:]
     instruction.operands = operands[:]
-    return instruction, true
+    return
 }
 
-parse_lda :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
-    instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
-    return instruction, true
+parse_lda :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    instruction.addr_mode = parse_value_operand(parser, tokens, operands)
+    return
 }
 
-parse_ldr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+parse_ldr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
     instruction.addr_mode = .Implied
-    parse_register_operand(parser, tokens, operands) or_return
+    parse_register_operand(parser, tokens, operands)
 
     if !match_set(parser, {.EOF, .Instruction}) {
-        instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
+        instruction.addr_mode = parse_value_operand(parser, tokens, operands)
     }
 
     if match(parser, .Comma) {
         consume(parser) // discard comma
         instruction.addr_mode = .Register
-        parse_register_operand(parser, tokens, operands) or_return
+        parse_register_operand(parser, tokens, operands)
     }
 
-    return instruction, true
+    return
 }
 
-parse_clr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+parse_clr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
     if !match(parser, .Register) {
         instruction.addr_mode = .Implied
-        return instruction, true
+        return instruction
     }
 
     for _ in 0..<4 {
         match(parser, .Register) or_break
-        parse_register_operand(parser, tokens, operands) or_return
+        instruction.addr_mode = .Register
+        parse_register_operand(parser, tokens, operands)
     }
 
-    return instruction, true
+    return
 }
 
-parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
     instruction.addr_mode = .Implied
-    parse_register_operand(parser, tokens, operands) or_return
+    parse_register_operand(parser, tokens, operands)
 
     // a single operand swaps with ACC, two swap with each other
     if match(parser, .Register) {
         instruction.addr_mode = .Register
-        parse_register_operand(parser, tokens, operands) or_return
+        parse_register_operand(parser, tokens, operands)
     }
 
-    return instruction, true
+    return
 }
 
-parse_cmp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
-    instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
-    return instruction, true
-}
