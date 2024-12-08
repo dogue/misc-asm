@@ -12,7 +12,7 @@ TokenType :: enum {
     Invalid,
     Instruction,
     Register,
-    Number,
+    DecimalNumber,
     HexNumber,
     Symbol,
     Comma,
@@ -48,8 +48,7 @@ lexer_init :: proc(input: string) -> Lexer {
     return l
 }
 
-@(private = "file")
-peek :: proc(l: ^Lexer) -> rune {
+lexer_peek :: proc(l: ^Lexer) -> rune {
     if l.pos >= len(l.input) {
         return 0
     }
@@ -57,8 +56,7 @@ peek :: proc(l: ^Lexer) -> rune {
     return l.input[l.pos]
 }
 
-@(private = "file")
-consume :: proc(l: ^Lexer) -> rune {
+lexer_consume :: proc(l: ^Lexer) -> rune {
     if l.pos >= len(l.input) {
         return 0
     }
@@ -91,30 +89,30 @@ lex_scan_all :: proc(l: ^Lexer) -> []Token {
 lex_scan :: proc(l: ^Lexer) -> (tok: Token) {
     context.allocator = vmem.arena_allocator(&l.arena)
 
-    for unicode.is_space(peek(l)) {
-        consume(l)
+    for unicode.is_space(lexer_peek(l)) {
+        lexer_consume(l)
     }
 
     tok.line = l.line
     tok.col = l.col
 
-    r := peek(l)
+    r := lexer_peek(l)
     switch r {
     case 0:
         tok.type = .EOF
 
     case ',':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Comma
         tok.text = ","
 
     case '#':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Hash
         tok.text = "#"
 
     case ':':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Colon
         tok.text = ":"
 
@@ -122,50 +120,50 @@ lex_scan :: proc(l: ^Lexer) -> (tok: Token) {
         tok.type = .Comment
         text: strings.Builder
         strings.builder_init(&text)
-        for peek(l) != '\n' && peek(l) != 0 {
-            ch := consume(l)
+        for lexer_peek(l) != '\n' && lexer_peek(l) != 0 {
+            ch := lexer_consume(l)
             strings.write_rune(&text, ch)
         }
         tok.text = strings.to_string(text)
 
     case '0'..='9':
-        tok.type = .Number
+        tok.type = .DecimalNumber
         text: strings.Builder
         strings.builder_init(&text)
-        for unicode.is_digit(peek(l)) {
-            ch := consume(l)
+        for unicode.is_digit(lexer_peek(l)) {
+            ch := lexer_consume(l)
             strings.write_rune(&text, ch)
         }
         tok.text = strings.to_string(text)
 
     case '$':
-        consume(l) // consume $
+        lexer_consume(l) // consume $
         tok.type = .HexNumber
         text: strings.Builder
         strings.builder_init(&text)
-        for unicode.is_digit(peek(l)) || (peek(l) in HexLetters) {
-            ch := consume(l)
+        for unicode.is_digit(lexer_peek(l)) || (lexer_peek(l) in HexLetters) {
+            ch := lexer_consume(l)
             strings.write_rune(&text, ch)
         }
         tok.text = strings.to_string(text)
 
     case 'x', 'X':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Register
         tok.text = "x"
 
     case 'y', 'Y':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Register
         tok.text = "y"
 
     case 'z', 'Z':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Register
         tok.text = "z"
 
     case 'w', 'W':
-        consume(l)
+        lexer_consume(l)
         tok.type = .Register
         tok.text = "w"
 
@@ -173,8 +171,8 @@ lex_scan :: proc(l: ^Lexer) -> (tok: Token) {
         tok.type = .Symbol
         text: strings.Builder
         strings.builder_init(&text)
-        for unicode.is_alpha(peek(l)) || unicode.is_digit(peek(l)) || peek(l) == '_' {
-            ch := consume(l)
+        for unicode.is_alpha(lexer_peek(l)) || unicode.is_digit(lexer_peek(l)) || lexer_peek(l) == '_' {
+            ch := lexer_consume(l)
             strings.write_rune(&text, ch)
         }
         tok.text = strings.to_upper(strings.to_string(text))

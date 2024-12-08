@@ -7,24 +7,6 @@ import vmem "core:mem/virtual"
 ta: vmem.Arena
 
 @(test)
-test_error_parse_lda_bad_immediate_value :: proc(t: ^testing.T) {
-    context.allocator = vmem.arena_allocator(&ta)
-
-    input := []Token{
-        {type = .Instruction, text = "LDA"},
-        {type = .Number, text = "42"},
-    }
-
-    p := Parser{}
-    parser_init(&p, input)
-    res := parse_instruction(&p)
-
-    testing.expect_value(t, len(p.errors), 1)
-    testing.expect_value(t, p.errors[0].kind, ParseErrorKind.UnexpectedToken)
-    testing.expect_value(t, p.errors[0].token, Token{type = .Number, text = "42"})
-}
-
-@(test)
 test_parse_lda_immediate :: proc(t: ^testing.T) {
     context.allocator = vmem.arena_allocator(&ta)
 
@@ -474,4 +456,100 @@ test_parse_swp_reg :: proc(t: ^testing.T) {
     testing.expect_value(t, res.tokens[2].type, TokenType.Register)
     testing.expect_value(t, res.operands[0], RegLiteral(0x00))
     testing.expect_value(t, res.operands[1], RegLiteral(0x01))
+}
+
+@(test)
+test_parse_multiple_instructions_with_errors :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        // Valid LDA immediate
+        {type = .Instruction, text = "LDA"},
+        {type = .Hash, text = "#"},
+        {type = .HexNumber, text = "42"},
+
+        // Invalid LDR (missing register)
+        {type = .Instruction, text = "LDR"},
+        {type = .HexNumber, text = "69"},
+
+        // Valid CLR register
+        {type = .Instruction, text = "CLR"},
+        {type = .Register, text = "X"},
+
+        // Invalid SWP (invalid register name)
+        {type = .Instruction, text = "SWP"},
+        {type = .Symbol, text = "Q"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+
+    instructions := make([dynamic]Instruction)
+    for parser_peek(&p).type != .EOF {
+        append(&instructions, parse_instruction(&p))
+    }
+
+    testing.expect_value(t, len(instructions), 4)
+    testing.expect_value(t, len(p.errors), 2)
+
+    // first
+    testing.expect_value(t, instructions[0].addr_mode, AddrMode.Immediate)
+    testing.expect_value(t, len(instructions[0].operands), 1)
+    testing.expect_value(t, instructions[0].operands[0], ByteLiteral(0x42))
+
+    // third
+    testing.expect_value(t, instructions[2].addr_mode, AddrMode.Register)
+    testing.expect_value(t, len(instructions[2].operands), 1)
+    testing.expect_value(t, instructions[2].operands[0], RegLiteral(0))
+
+    // errors
+    first_err := p.errors[0].(UnexpectedTokenErr)
+    testing.expect_value(t, first_err.token.type, TokenType.HexNumber)
+    testing.expect_value(t, first_err.expected, bit_set[TokenType]{.Register})
+
+    second_err := p.errors[1].(UnexpectedTokenErr)
+    testing.expect_value(t, second_err.token.type, TokenType.Symbol)
+    testing.expect_value(t, second_err.expected, bit_set[TokenType]{.Register})
+}
+
+@(test)
+test_parse_jmp_absolute :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "JMP"},
+        {type = .HexNumber, text = "4269"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res := parse_instruction(&p)
+
+    testing.expect_value(t, res.addr_mode, AddrMode.Absolute)
+    testing.expect_value(t, len(res.tokens), 2)
+    testing.expect_value(t, len(res.operands), 1)
+    testing.expect_value(t, res.tokens[0].type, TokenType.Instruction)
+    testing.expect_value(t, res.tokens[1].type, TokenType.HexNumber)
+    testing.expect_value(t, res.operands[0], AddrLiteral(0x4269))
+}
+
+@(test)
+test_parse_jmp_relative :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "JMP"},
+        {type = .HexNumber, text = "42"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res := parse_instruction(&p)
+
+    testing.expect_value(t, res.addr_mode, AddrMode.Relative)
+    testing.expect_value(t, len(res.tokens), 2)
+    testing.expect_value(t, len(res.operands), 1)
+    testing.expect_value(t, res.tokens[0].type, TokenType.Instruction)
+    testing.expect_value(t, res.tokens[1].type, TokenType.HexNumber)
+    testing.expect_value(t, res.operands[0], AddrLiteral(0x42))
 }

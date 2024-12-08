@@ -58,32 +58,46 @@ Parser :: struct {
     arena: vmem.Arena,
 }
 
-ParseError :: struct {
-    kind: ParseErrorKind,
+ParseError :: union {
+    UnexpectedTokenErr,
+    ParseNumberErr,
+    TooManyOperandsErr,
+    InvalidValueErr,
+}
+
+UnexpectedTokenErr :: struct {
     token: Token,
+    expected: bit_set[TokenType],
 }
 
-ParseErrorKind :: enum {
-    UnexpectedToken,
-    StrConvFailed,
-    TooManyOperands,
-    InvalidOperand,
+ParseNumberErr :: struct {
+    token: Token,
+    target_type: TokenType,
 }
 
-@(private = "file")
-error :: proc(p: ^Parser, token: Token, kind: ParseErrorKind = .UnexpectedToken) {
-    append(&p.errors, ParseError{kind, token})
+TooManyOperandsErr :: struct {
+    token: Token,
+    max_allowed: int,
+}
+
+InvalidValueErr :: struct {
+    token: Token,
+    value: int,
+    max_allowed: int,
+}
+
+parse_error :: proc(p: ^Parser, err: ParseError) {
+    append(&p.errors, err)
 }
 
 parser_init :: proc(parser: ^Parser, tokens: []Token) {
     alloc := vmem.arena_allocator(&parser.arena)
     parser.tokens = tokens
-    parser.errors = make([dynamic]ParseError)
+    parser.errors = make([dynamic]ParseError, alloc)
 }
 
 // look at current token
-@(private = "file")
-peek :: proc(p: ^Parser) -> Token {
+parser_peek :: proc(p: ^Parser) -> Token {
     if p.pos >= len(p.tokens) {
         return Token { type = .EOF }
     }
@@ -92,8 +106,7 @@ peek :: proc(p: ^Parser) -> Token {
 }
 
 // look at next token
-@(private = "file")
-peek_next :: proc(p: ^Parser) -> Token {
+parser_peek_next :: proc(p: ^Parser) -> Token {
     if p.pos >= len(p.tokens) - 1 {
         return Token { type = .EOF }
     }
@@ -103,18 +116,24 @@ peek_next :: proc(p: ^Parser) -> Token {
 
 // "soft" assert current token's type
 match :: proc(p: ^Parser, t: TokenType) -> bool {
-    return peek(p).type == t
+    return parser_peek(p).type == t
 }
 
 // "soft" assert current token's type against a set
 match_set :: proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
-    return peek(p).type in t
+    return parser_peek(p).type in t
 }
 
 // assert current token's type - error on mismatch
-expect :: proc(p: ^Parser, t: TokenType) -> bool {
-    if peek(p).type != t {
-        error(p, peek(p))
+expect :: proc(parser: ^Parser, type: TokenType) -> bool {
+    token := parser_peek(parser)
+    if token.type != type {
+        parse_error(parser, UnexpectedTokenErr{token, {type}})
+
+        for !match_set(parser, {.EOF, .Instruction}) {
+            consume(parser)
+        }
+
         return false
     }
 
@@ -122,9 +141,15 @@ expect :: proc(p: ^Parser, t: TokenType) -> bool {
 }
 
 // assert current token's type against a set - error on mismatch
-expect_set ::  proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
-    if peek(p).type not_in t {
-        error(p, peek(p))
+expect_set ::  proc(parser: ^Parser, type: bit_set[TokenType]) -> bool {
+    token := parser_peek(parser)
+    if token.type not_in type {
+        parse_error(parser, UnexpectedTokenErr{token, type})
+
+        for !match_set(parser, {.EOF, .Instruction}) {
+            consume(parser) // reach EOF or next instruction
+        }
+
         return false
     }
 
@@ -132,9 +157,15 @@ expect_set ::  proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
 }
 
 // assert next token's type - error on mismatch
-expect_next :: proc(p: ^Parser, t: TokenType) -> bool {
-    if peek_next(p).type != t {
-        error(p, peek_next(p))
+expect_next :: proc(parser: ^Parser, type: TokenType) -> bool {
+    token := parser_peek_next(parser)
+    if token.type != type {
+        parse_error(parser, UnexpectedTokenErr{token, {type}})
+
+        for !match_set(parser, {.EOF, .Instruction}) {
+            consume(parser)
+        }
+
         return false
     }
 
@@ -144,14 +175,12 @@ expect_next :: proc(p: ^Parser, t: TokenType) -> bool {
 // return current token and advance past it
 @(private = "file")
 consume :: proc(p: ^Parser) -> Token {
-    t := peek(p)
+    t := parser_peek(p)
     p.pos += 1
     return t
 }
 
-parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (ok: bool) {
-    expect(parser, .Register) or_return
-
+parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) {
     register_token := consume(parser)
     register: RegLiteral
 
@@ -160,31 +189,29 @@ parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operand
     case "y", "Y": register = 0x01
     case "z", "Z": register = 0x02
     case "w", "W": register = 0x03
-    case:
-        error(parser, register_token, .InvalidOperand)
-        return
+    case: return
     }
 
     append(tokens, register_token)
     append(operands, register)
-    return true
 }
 
 parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode) {
-    #partial switch peek(parser).type {
+    token := parser_peek(parser)
+    #partial switch token.type {
     case .Hash:
         mode = .Immediate
         consume(parser) // discard #
-        expect_set(parser, {.Number, .HexNumber})
+        expect_set(parser, {.DecimalNumber, .HexNumber})
 
         value_token := consume(parser)
         append(tokens, value_token)
 
         value: ByteLiteral
-        if value_token.type == .Number {
+        if value_token.type == .DecimalNumber {
             raw_value, conversion_ok := strconv.parse_int(value_token.text, 10)
             if !conversion_ok {
-                error(parser, value_token, .StrConvFailed)
+                parse_error(parser, ParseNumberErr{value_token, .DecimalNumber})
             }
             value = ByteLiteral(raw_value)
         }
@@ -192,7 +219,7 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
         if value_token.type == .HexNumber {
             raw_value, conversion_ok := strconv.parse_int(value_token.text, 16)
             if !conversion_ok {
-                error(parser, value_token, .StrConvFailed)
+                parse_error(parser, ParseNumberErr{value_token, .HexNumber})
             }
             value = ByteLiteral(raw_value)
         }
@@ -206,7 +233,7 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
 
         raw_value, conversion_ok := strconv.parse_int(address_token.text, 16)
         if !conversion_ok {
-            error(parser, address_token, .StrConvFailed)
+            parse_error(parser, ParseNumberErr{address_token, .HexNumber})
         }
 
         address := AddrLiteral(raw_value)
@@ -235,9 +262,29 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
         mode = .Register
 
     case:
-        error(parser, peek(parser))
+        parse_error(parser, UnexpectedTokenErr{token, {.Hash, .HexNumber, .Register}})
     }
 
+    return
+}
+
+parse_jump_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode) {
+    address_token := consume(parser)
+    append(tokens, address_token)
+
+    value, conversion_ok := strconv.parse_int(address_token.text, 16)
+    if !conversion_ok {
+        parse_error(parser, ParseNumberErr{address_token, .HexNumber})
+        return
+    }
+
+    if value <= 0xFF {
+        mode = .Relative
+    } else {
+        mode = .Absolute
+    }
+
+    append(operands, AddrLiteral(value))
     return
 }
 
@@ -261,6 +308,9 @@ parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction) {
     case "SWP":
         instruction = parse_swp(parser, &tokens, &operands)
 
+    case "JMP":
+        instruction = parse_jmp(parser, &tokens, &operands)
+
     case:
         instruction.addr_mode = parse_value_operand(parser, &tokens, &operands)
 
@@ -277,10 +327,12 @@ parse_lda :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]
 }
 
 parse_ldr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    if !expect(parser, .Register) do return
+
     instruction.addr_mode = .Implied
     parse_register_operand(parser, tokens, operands)
 
-    if !match_set(parser, {.EOF, .Instruction}) {
+    if !match_set(parser, {.EOF, .Instruction, .Comma}) {
         instruction.addr_mode = parse_value_operand(parser, tokens, operands)
     }
 
@@ -309,6 +361,8 @@ parse_clr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]
 }
 
 parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    if !expect(parser, .Register) do return
+
     instruction.addr_mode = .Implied
     parse_register_operand(parser, tokens, operands)
 
@@ -321,3 +375,8 @@ parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]
     return
 }
 
+parse_jmp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    if !expect(parser, .HexNumber) do return
+    instruction.addr_mode = parse_jump_operand(parser, tokens, operands)
+    return
+}
