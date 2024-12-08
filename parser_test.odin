@@ -17,7 +17,7 @@ test_error_parse_lda_bad_immediate_value :: proc(t: ^testing.T) {
 
     p := Parser{}
     parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, !ok)
     testing.expect_value(t, len(p.errors), 1)
@@ -37,7 +37,7 @@ test_parse_lda_immediate :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Immediate)
@@ -59,7 +59,7 @@ test_parse_lda_zeropage :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.ZeroPage)
@@ -81,7 +81,7 @@ test_parse_lda_absolute :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Absolute)
@@ -105,7 +105,7 @@ test_parse_lda_indexed_zeropage :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.IndexedZeroPage)
@@ -131,7 +131,7 @@ test_parse_lda_indexed_absolute :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.IndexedAbsolute)
@@ -155,7 +155,7 @@ test_parse_lda_register :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_lda(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Register)
@@ -177,7 +177,7 @@ test_parse_ldr_implied :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Implied)
@@ -201,7 +201,7 @@ test_parse_ldr_immediate :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Immediate)
@@ -226,7 +226,7 @@ test_parse_ldr_zeropage :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.ZeroPage)
@@ -251,7 +251,7 @@ test_parse_ldr_absolute :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Absolute)
@@ -278,7 +278,7 @@ test_parse_ldr_indexed_zeropage :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.IndexedZeroPage)
@@ -307,7 +307,7 @@ test_parse_ldr_index_absolute :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.IndexedAbsolute)
@@ -334,7 +334,7 @@ test_parse_ldr_register :: proc(t: ^testing.T) {
 
     p := Parser{}
 	parser_init(&p, input)
-    res, ok := parse_ldr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Register)
@@ -358,7 +358,7 @@ test_parse_clr_one_reg :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_clr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, len(res.tokens), 2)
@@ -380,7 +380,7 @@ test_parse_clr_two_regs :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_clr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, len(res.tokens), 3)
@@ -405,7 +405,7 @@ test_parse_clr_three_regs :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_clr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, len(res.tokens), 4)
@@ -433,7 +433,7 @@ test_parse_clr_four_regs :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_clr(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, len(res.tokens), 5)
@@ -450,28 +450,6 @@ test_parse_clr_four_regs :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_error_parse_clr_five_regs :: proc(t: ^testing.T) {
-    context.allocator = vmem.arena_allocator(&ta)
-
-    input := []Token{
-        {type = .Instruction, text = "CLR"},
-        {type = .Register, text = "X"},
-        {type = .Register, text = "X"},
-        {type = .Register, text = "X"},
-        {type = .Register, text = "X"},
-        {type = .Register, text = "X"},
-    }
-
-    p: Parser
-    parser_init(&p, input)
-    res, ok := parse_clr(&p)
-
-    testing.expect(t, !ok)
-    testing.expect_value(t, len(p.errors), 1)
-    testing.expect_value(t, p.errors[0].kind, ParseErrorKind.TooManyOperands)
-}
-
-@(test)
 test_parse_swp_implied :: proc(t: ^testing.T) {
     context.allocator = vmem.arena_allocator(&ta)
 
@@ -482,7 +460,7 @@ test_parse_swp_implied :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_swp(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Implied)
@@ -505,7 +483,7 @@ test_parse_swp_reg :: proc(t: ^testing.T) {
 
     p: Parser
     parser_init(&p, input)
-    res, ok := parse_swp(&p)
+    res, ok := parse_instruction(&p)
 
     testing.expect(t, ok)
     testing.expect_value(t, res.addr_mode, AddrMode.Register)

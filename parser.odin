@@ -67,6 +67,7 @@ ParseErrorKind :: enum {
     UnexpectedToken,
     StrConvFailed,
     TooManyOperands,
+    InvalidOperand,
 }
 
 @(private = "file")
@@ -148,224 +149,175 @@ consume :: proc(p: ^Parser) -> Token {
     return t
 }
 
-// parse an immediate literal value such as `#$4000` or `#69`
-parse_ivalue :: proc(p: ^Parser, toks: ^[dynamic]Token, oper: ^[dynamic]Operand) -> (ok: bool) {
-    consume(p) // discard #
-    expect_set(p, {.Number, .HexNumber}) or_return
+parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (ok: bool) {
+    expect(parser, .Register) or_return
 
-    value_tok := consume(p)
-    append(toks, value_tok)
+    register_token := consume(parser)
+    register: RegLiteral
 
-    value: ByteLiteral
-    if value_tok.type == .Number {
-        raw_value, conv_ok := strconv.parse_int(value_tok.text, 10)
-
-        if !conv_ok {
-            error(p, value_tok, .StrConvFailed)
-            return
-        }
-
-        value = ByteLiteral(raw_value)
+    switch register_token.text {
+    case "x", "X": register = 0x00
+    case "y", "Y": register = 0x01
+    case "z", "Z": register = 0x02
+    case "w", "W": register = 0x03
+    case:
+        error(parser, register_token, .InvalidOperand)
+        return
     }
 
-    if value_tok.type == .HexNumber {
-        raw_value, conv_ok := strconv.parse_int(value_tok.text, 16)
-
-        if !conv_ok {
-            error(p, value_tok, .StrConvFailed)
-            return
-        }
-
-        value = ByteLiteral(raw_value)
-    }
-
-    append(oper, value)
+    append(tokens, register_token)
+    append(operands, register)
     return true
 }
 
-// parse address literal and mode
-parse_addr :: proc(p: ^Parser, toks: ^[dynamic]Token, oper: ^[dynamic]Operand) -> (mode: AddrMode, ok: bool) {
-    addr_tok := consume(p)
-    append(toks, addr_tok)
-    raw_value, conv_ok := strconv.parse_int(addr_tok.text, 16)
-    
-    if !conv_ok {
-        error(p, addr_tok, .StrConvFailed)
-        return
-    }
+parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode, ok: bool) {
+    #partial switch peek(parser).type {
+    case .Hash:
+        mode = .Immediate
+        consume(parser) // discard #
+        expect_set(parser, {.Number, .HexNumber}) or_return
 
-    addr := AddrLiteral(raw_value)
-    append(oper, addr)
+        value_token := consume(parser)
+        append(tokens, value_token)
 
-    if addr > 255 {
-        mode = .Absolute
-    } else {
-        mode = .ZeroPage
-    }
-
-    if match(p, .Comma) {
-        consume(p) // discard comma
-        expect(p, .Register) or_return
-        reg_tok := consume(p)
-        reg := parse_reg_id(reg_tok) or_return
-        append(toks, reg_tok)
-        append(oper, reg)
-
-        if mode == .ZeroPage {
-            mode = .IndexedZeroPage
-        } else {
-            mode = .IndexedAbsolute
+        value: ByteLiteral
+        if value_token.type == .Number {
+            raw_value, conversion_ok := strconv.parse_int(value_token.text, 10)
+            if !conversion_ok {
+                error(parser, value_token, .StrConvFailed)
+                return
+            }
+            value = ByteLiteral(raw_value)
         }
-    }
 
-    return mode, true
-}
+        if value_token.type == .HexNumber {
+            raw_value, conversion_ok := strconv.parse_int(value_token.text, 16)
+            if !conversion_ok {
+                error(parser, value_token, .StrConvFailed)
+                return
+            }
+            value = ByteLiteral(raw_value)
+        }
 
-parse_reg_id :: proc(t: Token) -> (rl: RegLiteral, ok: bool) {
-    switch t.text {
-    case "x", "X": return RegLiteral(0x00), true
-    case "y", "Y": return RegLiteral(0x01), true
-    case "z", "Z": return RegLiteral(0x02), true
-    case "w", "W": return RegLiteral(0x03), true
+        append(operands, value)
+        return .Immediate, true
+
+    case .HexNumber:
+        address_token := consume(parser)
+        append(tokens, address_token)
+
+        raw_value, conversion_ok := strconv.parse_int(address_token.text, 16)
+        if !conversion_ok {
+            error(parser, address_token, .StrConvFailed)
+            return
+        }
+
+        address := AddrLiteral(raw_value)
+        append(operands, address)
+
+        if address > 255 {
+            mode = .Absolute
+        } else {
+            mode = .ZeroPage
+        }
+
+        // indexed modes
+        if match(parser, .Comma) {
+            consume(parser) // discard comma
+            parse_register_operand(parser, tokens, operands) or_return
+
+            if mode == .ZeroPage {
+                mode = .IndexedZeroPage
+            } else {
+                mode = .IndexedAbsolute
+            }
+       }
+
+       return mode, true
+
+    case .Register:
+        parse_register_operand(parser, tokens, operands) or_return
+        return .Register, true
+
+    case:
+        error(parser, peek(parser))
     }
 
     return
 }
 
-parse_instruction :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
-    expect(p, .Instruction) or_return
-    context.allocator = vmem.arena_allocator(&p.arena)
+parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction, ok: bool) {
+    expect(parser, .Instruction) or_return
+    context.allocator = vmem.arena_allocator(&parser.arena)
+    tokens := make([dynamic]Token)
+    operands := make([dynamic]Operand)
 
-    raw_inst := strings.to_upper(peek(p).text)
+    instruction_token := consume(parser)
+    append(&tokens, instruction_token)
+
+    raw_inst := strings.to_upper(instruction_token.text)
     switch raw_inst {
-    case "LDA": return parse_lda(p)
-    case "LDR": return parse_lda(p)
+    case "LDA": instruction = parse_lda(parser, &tokens, &operands) or_return
+    case "LDR": instruction = parse_ldr(parser, &tokens, &operands) or_return
+    case "CLR": instruction = parse_clr(parser, &tokens, &operands) or_return
+    case "SWP": instruction = parse_swp(parser, &tokens, &operands) or_return
     }
 
-    return
+    instruction.tokens = tokens[:]
+    instruction.operands = operands[:]
+    return instruction, true
 }
 
-parse_lda :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
-    toks := make([dynamic]Token)
-    oper := make([dynamic]Operand)
+parse_lda :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+    instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
+    return instruction, true
+}
 
-    append(&toks, consume(p)) // consume instruction token
+parse_ldr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+    instruction.addr_mode = .Implied
+    parse_register_operand(parser, tokens, operands) or_return
 
-    #partial switch peek(p).type {
-    case .Hash:
-        inst.addr_mode = .Immediate
-        parse_ivalue(p, &toks, &oper) or_return
-
-    case .HexNumber:
-        inst.addr_mode = parse_addr(p, &toks, &oper) or_return
-
-    case .Register:
-        inst.addr_mode = .Register
-        tok := consume(p) // consume reg token
-        reg := parse_reg_id(tok) or_return
-        append(&toks, tok)
-        append(&oper, reg)
-
-    case:
-        error(p, peek(p))
-        return
-
+    if !match_set(parser, {.EOF, .Instruction}) {
+        instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
     }
 
-    inst.tokens = toks[:]
-    inst.operands = oper[:]
-    return inst, true
-}
-
-parse_ldr :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
-    expect_next(p, .Register) or_return
-
-    toks := make([dynamic]Token)
-    oper := make([dynamic]Operand)
-
-    append(&toks, consume(p)) // consume instruction token
-
-    reg_tok := consume(p)
-    reg := parse_reg_id(reg_tok) or_return
-    append(&toks, reg_tok)
-    append(&oper, reg)
-
-    #partial switch peek(p).type {
-    case .EOF, .Instruction:
-        inst.addr_mode = .Implied
-
-    case .Hash:
-        inst.addr_mode = .Immediate
-        parse_ivalue(p, &toks, &oper) or_return
-
-    case .HexNumber:
-        inst.addr_mode = parse_addr(p, &toks, &oper) or_return
-
-    case .Register:
-        inst.addr_mode = .Register
-        reg_tok := consume(p)
-        reg := parse_reg_id(reg_tok) or_return
-        append(&toks, reg_tok)
-        append(&oper, reg)
-
-    case:
-        error(p, peek(p))
-        return
+    if match(parser, .Comma) {
+        consume(parser) // discard comma
+        instruction.addr_mode = .Register
+        parse_register_operand(parser, tokens, operands) or_return
     }
 
-    inst.tokens = toks[:]
-    inst.operands = oper[:]
-    return inst, true
+    return instruction, true
 }
 
-parse_clr :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
-    expect_next(p, .Register) or_return
-
-    toks := make([dynamic]Token)
-    oper := make([dynamic]Operand)
-
-    append(&toks, consume(p)) // consume instruction token
+parse_clr :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+    if !match(parser, .Register) {
+        instruction.addr_mode = .Implied
+        return instruction, true
+    }
 
     for _ in 0..<4 {
-        match(p, .Register) or_break
-
-        reg_tok := consume(p)
-        reg := parse_reg_id(reg_tok) or_return
-        append(&toks, reg_tok)
-        append(&oper, reg)
+        match(parser, .Register) or_break
+        parse_register_operand(parser, tokens, operands) or_return
     }
 
-    if match(p, .Register) {
-        error(p, peek(p), .TooManyOperands)
-        return
-    }
-
-    inst.tokens = toks[:]
-    inst.operands = oper[:]
-    return inst, true
+    return instruction, true
 }
 
-parse_swp :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
-    toks := make([dynamic]Token)
-    oper := make([dynamic]Operand)
-
-    append(&toks, consume(p)) // consume instruction token
-
-    expect(p, .Register) or_return
-    reg := parse_reg_id(peek(p)) or_return
-    append(&toks, consume(p)) // consume first register token
-    append(&oper, reg)
-    inst.addr_mode = .Implied
+parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+    instruction.addr_mode = .Implied
+    parse_register_operand(parser, tokens, operands) or_return
 
     // a single operand swaps with ACC, two swap with each other
-    if match(p, .Register) {
-        inst.addr_mode = .Register
-        reg = parse_reg_id(peek(p)) or_return
-        append(&toks, consume(p))
-        append(&oper, reg)
+    if match(parser, .Register) {
+        instruction.addr_mode = .Register
+        parse_register_operand(parser, tokens, operands) or_return
     }
 
-    inst.tokens = toks[:]
-    inst.operands = oper[:]
-    return inst, true
+    return instruction, true
+}
+
+parse_cmp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction, ok: bool) {
+    instruction.addr_mode = parse_value_operand(parser, tokens, operands) or_return
+    return instruction, true
 }
