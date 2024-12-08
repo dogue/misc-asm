@@ -207,12 +207,22 @@ parse_lda :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
 }
 
 parse_ldr :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
+    expect(p, .Register) or_return
+
     toks := make([dynamic]Token)
     oper := make([dynamic]Operand)
 
     append(&toks, consume(p)) // consume instruction token
 
+    reg_tok := consume(p)
+    reg := parse_reg_id(reg_tok) or_return
+    append(&toks, reg_tok)
+    append(&oper, reg)
+
     #partial switch peek(p).type {
+    case .EOF, .Instruction:
+        inst.addr_mode = .Implied
+
     case .Hash:
         inst.addr_mode = .Immediate
         parse_ivalue(p, &toks, &oper) or_return
@@ -233,5 +243,5 @@ parse_ldr :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
 
     inst.tokens = toks[:]
     inst.operands = oper[:]
-    return
+    return inst, true
 }
