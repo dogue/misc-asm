@@ -80,6 +80,7 @@ parser_init :: proc(parser: ^Parser, tokens: []Token) {
     parser.errors = make([dynamic]ParseError)
 }
 
+// look at current token
 @(private = "file")
 peek :: proc(p: ^Parser) -> Token {
     if p.pos >= len(p.tokens) {
@@ -89,6 +90,7 @@ peek :: proc(p: ^Parser) -> Token {
     return p.tokens[p.pos]
 }
 
+// look at next token
 @(private = "file")
 peek_next :: proc(p: ^Parser) -> Token {
     if p.pos >= len(p.tokens) - 1 {
@@ -98,14 +100,17 @@ peek_next :: proc(p: ^Parser) -> Token {
     return p.tokens[p.pos + 1]
 }
 
+// "soft" assert current token's type
 match :: proc(p: ^Parser, t: TokenType) -> bool {
     return peek(p).type == t
 }
 
+// "soft" assert current token's type against a set
 match_set :: proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
     return peek(p).type in t
 }
 
+// assert current token's type - error on mismatch
 expect :: proc(p: ^Parser, t: TokenType) -> bool {
     if peek(p).type != t {
         error(p, peek(p))
@@ -115,6 +120,7 @@ expect :: proc(p: ^Parser, t: TokenType) -> bool {
     return true
 }
 
+// assert current token's type against a set - error on mismatch
 expect_set ::  proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
     if peek(p).type not_in t {
         error(p, peek(p))
@@ -124,6 +130,7 @@ expect_set ::  proc(p: ^Parser, t: bit_set[TokenType]) -> bool {
     return true
 }
 
+// assert next token's type - error on mismatch
 expect_next :: proc(p: ^Parser, t: TokenType) -> bool {
     if peek_next(p).type != t {
         error(p, peek_next(p))
@@ -133,6 +140,7 @@ expect_next :: proc(p: ^Parser, t: TokenType) -> bool {
     return true
 }
 
+// return current token and advance past it
 @(private = "file")
 consume :: proc(p: ^Parser) -> Token {
     t := peek(p)
@@ -140,6 +148,7 @@ consume :: proc(p: ^Parser) -> Token {
     return t
 }
 
+// parse an immediate literal value such as `#$4000` or `#69`
 parse_ivalue :: proc(p: ^Parser, toks: ^[dynamic]Token, oper: ^[dynamic]Operand) -> (ok: bool) {
     consume(p) // discard #
     expect_set(p, {.Number, .HexNumber}) or_return
@@ -174,6 +183,7 @@ parse_ivalue :: proc(p: ^Parser, toks: ^[dynamic]Token, oper: ^[dynamic]Operand)
     return true
 }
 
+// parse address literal and mode
 parse_addr :: proc(p: ^Parser, toks: ^[dynamic]Token, oper: ^[dynamic]Operand) -> (mode: AddrMode, ok: bool) {
     addr_tok := consume(p)
     append(toks, addr_tok)
@@ -328,6 +338,31 @@ parse_clr :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
     if match(p, .Register) {
         error(p, peek(p), .TooManyOperands)
         return
+    }
+
+    inst.tokens = toks[:]
+    inst.operands = oper[:]
+    return inst, true
+}
+
+parse_swp :: proc(p: ^Parser) -> (inst: Instruction, ok: bool) {
+    toks := make([dynamic]Token)
+    oper := make([dynamic]Operand)
+
+    append(&toks, consume(p)) // consume instruction token
+
+    expect(p, .Register) or_return
+    reg := parse_reg_id(peek(p)) or_return
+    append(&toks, consume(p)) // consume first register token
+    append(&oper, reg)
+    inst.addr_mode = .Implied
+
+    // a single operand swaps with ACC, two swap with each other
+    if match(p, .Register) {
+        inst.addr_mode = .Register
+        reg = parse_reg_id(peek(p)) or_return
+        append(&toks, consume(p))
+        append(&oper, reg)
     }
 
     inst.tokens = toks[:]

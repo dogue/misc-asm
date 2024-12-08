@@ -470,3 +470,50 @@ test_error_parse_clr_five_regs :: proc(t: ^testing.T) {
     testing.expect_value(t, len(p.errors), 1)
     testing.expect_value(t, p.errors[0].kind, ParseErrorKind.TooManyOperands)
 }
+
+@(test)
+test_parse_swp_implied :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "SWP"},
+        {type = .Register, text = "X"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res, ok := parse_swp(&p)
+
+    testing.expect(t, ok)
+    testing.expect_value(t, res.addr_mode, AddrMode.Implied)
+    testing.expect_value(t, len(res.tokens), 2)
+    testing.expect_value(t, len(res.operands), 1)
+    testing.expect_value(t, res.tokens[0].type, TokenType.Instruction)
+    testing.expect_value(t, res.tokens[1].type, TokenType.Register)
+    testing.expect_value(t, res.operands[0], RegLiteral(0x00))
+}
+
+@(test)
+test_parse_swp_reg :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+    
+    input := []Token{
+        {type = .Instruction, text = "SWP"},
+        {type = .Register, text = "X"},
+        {type = .Register, text = "Y"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res, ok := parse_swp(&p)
+
+    testing.expect(t, ok)
+    testing.expect_value(t, res.addr_mode, AddrMode.Register)
+    testing.expect_value(t, len(res.tokens), 3)
+    testing.expect_value(t, len(res.operands), 2)
+    testing.expect_value(t, res.tokens[0].type, TokenType.Instruction)
+    testing.expect_value(t, res.tokens[1].type, TokenType.Register)
+    testing.expect_value(t, res.tokens[2].type, TokenType.Register)
+    testing.expect_value(t, res.operands[0], RegLiteral(0x00))
+    testing.expect_value(t, res.operands[1], RegLiteral(0x01))
+}
