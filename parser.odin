@@ -96,6 +96,17 @@ parser_init :: proc(parser: ^Parser, tokens: []Token) {
     parser.errors = make([dynamic]ParseError, alloc)
 }
 
+parse_all :: proc(parser: ^Parser) -> []Instruction {
+    context.allocator = vmem.arena_allocator(&parser.arena)
+    res := make([dynamic]Instruction)
+
+    for !match(parser, .EOF) {
+        append(&res, parse_instruction(parser))
+    }
+
+    return res[:]
+}
+
 // look at current token
 parser_peek :: proc(p: ^Parser) -> Token {
     if p.pos >= len(p.tokens) {
@@ -196,6 +207,40 @@ parse_register_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operand
     append(operands, register)
 }
 
+parse_addr_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode) {
+    address_token := consume(parser)
+    append(tokens, address_token)
+
+    raw_value, ok := strconv.parse_int(address_token.text, 16)
+    if !ok {
+        parse_error(parser, ParseNumberErr{address_token, .HexNumber})
+        return
+    }
+
+    address := AddrLiteral(raw_value)
+    append(operands, address)
+
+    if address > 255 {
+        mode = .Absolute
+    } else {
+        mode = .ZeroPage
+    }
+
+    if match(parser, .Comma) {
+        consume(parser) // discard comma
+        if !expect(parser, .Register) do return
+        parse_register_operand(parser, tokens, operands)
+
+        if mode == .ZeroPage {
+            mode = .IndexedZeroPage
+        } else {
+            mode = .IndexedAbsolute
+        }
+    }
+
+    return
+}
+
 parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (mode: AddrMode) {
     token := parser_peek(parser)
     #partial switch token.type {
@@ -228,34 +273,7 @@ parse_value_operand :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: 
         mode = .Immediate
 
     case .HexNumber:
-        address_token := consume(parser)
-        append(tokens, address_token)
-
-        raw_value, conversion_ok := strconv.parse_int(address_token.text, 16)
-        if !conversion_ok {
-            parse_error(parser, ParseNumberErr{address_token, .HexNumber})
-        }
-
-        address := AddrLiteral(raw_value)
-        append(operands, address)
-
-        if address > 255 {
-            mode = .Absolute
-        } else {
-            mode = .ZeroPage
-        }
-
-        // indexed modes
-        if match(parser, .Comma) {
-            consume(parser) // discard comma
-            parse_register_operand(parser, tokens, operands)
-
-            if mode == .ZeroPage {
-                mode = .IndexedZeroPage
-            } else {
-                mode = .IndexedAbsolute
-            }
-        }
+        mode = parse_addr_operand(parser, tokens, operands)
 
     case .Register:
         parse_register_operand(parser, tokens, operands)
@@ -308,8 +326,14 @@ parse_instruction :: proc(parser: ^Parser) -> (instruction: Instruction) {
     case "SWP":
         instruction = parse_swp(parser, &tokens, &operands)
 
-    case "JMP":
+    case "JMP", "JLT", "JGT", "JLE", "JGE", "JEQ", "JNE":
         instruction = parse_jmp(parser, &tokens, &operands)
+
+    case "STA":
+        instruction = parse_sta(parser, &tokens, &operands)
+
+    case "STR":
+        instruction = parse_str(parser, &tokens, &operands)
 
     case:
         instruction.addr_mode = parse_value_operand(parser, &tokens, &operands)
@@ -378,5 +402,21 @@ parse_swp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]
 parse_jmp :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
     if !expect(parser, .HexNumber) do return
     instruction.addr_mode = parse_jump_operand(parser, tokens, operands)
+    return
+}
+
+parse_sta :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    if !expect(parser, .HexNumber) do return
+    instruction.addr_mode = parse_addr_operand(parser, tokens, operands)
+    return
+}
+
+parse_str :: proc(parser: ^Parser, tokens: ^[dynamic]Token, operands: ^[dynamic]Operand) -> (instruction: Instruction) {
+    if !expect(parser, .Register) do return
+    if !expect_next(parser, .HexNumber) do return
+
+    parse_register_operand(parser, tokens, operands)
+    instruction.addr_mode = parse_addr_operand(parser, tokens, operands)
+
     return
 }

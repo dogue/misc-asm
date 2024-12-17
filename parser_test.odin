@@ -553,3 +553,65 @@ test_parse_jmp_relative :: proc(t: ^testing.T) {
     testing.expect_value(t, res.tokens[1].type, TokenType.HexNumber)
     testing.expect_value(t, res.operands[0], AddrLiteral(0x42))
 }
+
+@(test)
+test_parse_sta_absolute :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "STA"},
+        {type = .HexNumber, text = "4269"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res := parse_instruction(&p)
+
+    testing.expect_value(t, res.addr_mode, AddrMode.Absolute)
+    testing.expect_value(t, len(res.tokens), 2)
+    testing.expect_value(t, len(res.operands), 1)
+    testing.expect_value(t, res.operands[0], AddrLiteral(0x4269))
+}
+
+@(test)
+test_parse_sta_zeropage_indexed :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "STA"},
+        {type = .HexNumber, text = "42"},
+        {type = .Comma, text = ","},
+        {type = .Register, text = "X"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res := parse_instruction(&p)
+
+    testing.expect_value(t, res.addr_mode, AddrMode.IndexedZeroPage)
+    testing.expect_value(t, len(res.tokens), 3)
+    testing.expect_value(t, len(res.operands), 2)
+    testing.expect_value(t, res.operands[0], AddrLiteral(0x42))
+    testing.expect_value(t, res.operands[1], RegLiteral(0x00))
+}
+
+@(test)
+test_parse_str :: proc(t: ^testing.T) {
+    context.allocator = vmem.arena_allocator(&ta)
+
+    input := []Token{
+        {type = .Instruction, text = "STR"},
+        {type = .Register, text = "Y"},
+        {type = .HexNumber, text = "4269"},
+    }
+
+    p: Parser
+    parser_init(&p, input)
+    res := parse_instruction(&p)
+
+    testing.expect_value(t, res.addr_mode, AddrMode.Absolute)
+    testing.expect_value(t, len(res.tokens), 3)
+    testing.expect_value(t, len(res.operands), 2)
+    testing.expect_value(t, res.operands[0], RegLiteral(0x01))
+    testing.expect_value(t, res.operands[1], AddrLiteral(0x4269))
+}
